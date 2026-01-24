@@ -1,37 +1,136 @@
 import { motion } from 'framer-motion';
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Mic, Upload, CheckCircle, Square, Play, Pause, Trash2 } from 'lucide-react';
+import { Mic, Upload, CheckCircle, Square, Play, Pause, Trash2, X } from 'lucide-react';
 import { parserService, expenseService, categoryService } from '../../services';
 import { useExpenseStore } from '../../store';
 import toast from 'react-hot-toast';
+import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
+
+// Polyfill for speech recognition
+if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+  console.warn('Speech Recognition API not available in this browser');
+}
 
 const AddVoice = () => {
   const navigate = useNavigate();
   const addExpense = useExpenseStore((state) => state.addExpense);
-  const [audioFile, setAudioFile] = useState(null);
-  const [audioBlob, setAudioBlob] = useState(null);
-  const [audioUrl, setAudioUrl] = useState(null);
+  
+  const [transcribedText, setTranscribedText] = useState('');
   const [loading, setLoading] = useState(false);
   const [parsedData, setParsedData] = useState(null);
   const [step, setStep] = useState(1);
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordingTime, setRecordingTime] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
   const [categories, setCategories] = useState([]);
+  const [isListening, setIsListening] = useState(false);
+  const [interimTranscript, setInterimTranscript] = useState('');
+  const [browserSupported, setBrowserSupported] = useState(true);
   
-  const mediaRecorderRef = useRef(null);
-  const audioChunksRef = useRef([]);
-  const timerRef = useRef(null);
-  const audioPlayerRef = useRef(null);
+  const recognitionRef = useRef(null);
 
   useEffect(() => {
     fetchCategories();
+    initializeSpeechRecognition();
+    
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (audioUrl) URL.revokeObjectURL(audioUrl);
+      // Cleanup on unmount
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (e) {
+          console.log('Recognition already stopped');
+        }
+      }
     };
-  }, [audioUrl]);
+  }, []);
+
+  const initializeSpeechRecognition = () => {
+    try {
+      // Check browser support
+      const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+      
+      if (!SpeechRecognitionAPI) {
+        console.error('Speech Recognition not supported');
+        setBrowserSupported(false);
+        toast.error('Speech recognition not supported in this browser. Please use Chrome, Edge, or Safari.');
+        return;
+      }
+
+      // Create recognition instance
+      const recognition = new SpeechRecognitionAPI();
+      
+      // Configure recognition
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+      recognition.maxAlternatives = 1;
+
+      // Handle results (real-time transcription)
+      recognition.onresult = (event) => {
+        let interim = '';
+        let final = '';
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript;
+          
+          if (event.results[i].isFinal) {
+            final += transcript + ' ';
+          } else {
+            interim += transcript;
+          }
+        }
+
+        // Update interim results (real-time)
+        if (interim) {
+          setInterimTranscript(interim);
+        }
+
+        // Update final transcript
+        if (final) {
+          setTranscribedText(prev => (prev + final).trim());
+          setInterimTranscript('');
+        }
+      };
+
+      // Handle errors
+      recognition.onerror = (event) => {
+        console.error('Speech recognition error:', event.error);
+        setIsListening(false);
+        
+        const errorMessages = {
+          'no-speech': 'No speech detected. Please try again.',
+          'audio-capture': 'Microphone not accessible. Please check permissions.',
+          'not-allowed': 'Microphone permission denied. Please allow microphone access.',
+          'network': 'Network error. Please check your connection.',
+          'aborted': 'Speech recognition aborted.',
+          'service-not-allowed': 'Speech recognition service not allowed.'
+        };
+        
+        const message = errorMessages[event.error] || `Speech recognition error: ${event.error}`;
+        toast.error(message);
+      };
+
+      // Handle end event
+      recognition.onend = () => {
+        console.log('Speech recognition ended');
+        setIsListening(false);
+        setInterimTranscript('');
+      };
+
+      // Handle start event
+      recognition.onstart = () => {
+        console.log('Speech recognition started');
+        setIsListening(true);
+      };
+
+      recognitionRef.current = recognition;
+      console.log('Speech recognition initialized successfully');
+      
+    } catch (error) {
+      console.error('Failed to initialize speech recognition:', error);
+      setBrowserSupported(false);
+      toast.error('Failed to initialize speech recognition: ' + error.message);
+    }
+  };
 
   const fetchCategories = async () => {
     try {
@@ -43,138 +142,79 @@ const AddVoice = () => {
     }
   };
 
-  const startRecording = async () => {
+  const startRecording = () => {
+    if (!browserSupported || !recognitionRef.current) {
+      toast.error('Speech recognition not available. Please use Chrome, Edge, or Safari.');
+      return;
+    }
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const url = URL.createObjectURL(blob);
-        setAudioBlob(blob);
-        setAudioUrl(url);
-        
-        // Convert to File object
-        const file = new File([blob], 'voice_memo.webm', { type: 'audio/webm' });
-        setAudioFile(file);
-
-        // Stop all tracks
-        stream.getTracks().forEach(track => track.stop());
-      };
-
-      mediaRecorder.start();
-      setIsRecording(true);
-      setRecordingTime(0);
-
-      // Start timer
-      timerRef.current = setInterval(() => {
-        setRecordingTime(prev => prev + 1);
-      }, 1000);
-
-      toast.success('Recording started');
+      // Reset previous transcripts
+      setTranscribedText('');
+      setInterimTranscript('');
+      
+      // Start recognition
+      recognitionRef.current.start();
+      toast.success('🎤 Listening... Start speaking');
+      
     } catch (error) {
-      toast.error('Unable to access microphone');
-      console.error('Microphone error:', error);
+      console.error('Failed to start speech recognition:', error);
+      
+      // Handle already started error
+      if (error.message.includes('already started')) {
+        toast.error('Speech recognition already running');
+      } else {
+        toast.error('Failed to start: ' + error.message);
+      }
     }
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-      
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+        toast.success('Recording stopped');
+      } catch (error) {
+        console.error('Error stopping recognition:', error);
       }
-
-      toast.success('Recording stopped');
     }
   };
 
-  const deleteRecording = () => {
-    setAudioFile(null);
-    setAudioBlob(null);
-    if (audioUrl) URL.revokeObjectURL(audioUrl);
-    setAudioUrl(null);
-    setRecordingTime(0);
-    setIsPlaying(false);
-  };
-
-  const togglePlayback = () => {
-    const audio = audioPlayerRef.current;
-    if (!audio) return;
-
-    if (isPlaying) {
-      audio.pause();
-      setIsPlaying(false);
-    } else {
-      audio.play();
-      setIsPlaying(true);
-    }
-  };
-
-  const handleAudioEnded = () => {
-    setIsPlaying(false);
-  };
-
-  const handleFileSelect = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      if (file.size > 10 * 1024 * 1024) {
-        toast.error('Audio file should be less than 10MB');
-        return;
-      }
-      setAudioFile(file);
-      const url = URL.createObjectURL(file);
-      setAudioUrl(url);
-      toast.success('Audio file selected');
-    }
+  const clearTranscript = () => {
+    setTranscribedText('');
+    setInterimTranscript('');
+    toast.info('Transcript cleared');
   };
 
   const handleParse = async () => {
-    if (!audioFile) {
-      toast.error('Please record or upload audio');
+    const fullText = transcribedText.trim();
+    
+    if (!fullText) {
+      toast.error('Please speak something first');
       return;
+    }
+
+    // Stop listening before parsing
+    if (isListening) {
+      stopRecording();
     }
 
     setLoading(true);
     try {
-      const result = await parserService.parseVoice(audioFile);
+      console.log('Parsing text:', fullText);
+      
+      // Send transcribed text to backend for Gradio LLM parsing
+      const result = await parserService.parseVoiceText(fullText);
+      
+      console.log('Parse result:', result);
       setParsedData(result);
       setStep(2);
-      toast.success('Voice transcribed successfully!');
+      toast.success('Voice parsed successfully!');
+      
     } catch (error) {
-      // Mock transcription for demo
-      const transcriptionTexts = [
-        { text: "I spent $45.99 at Starbucks for coffee", amount: 45.99, merchant: "Starbucks", category: "Food & Dining" },
-        { text: "Paid $120 for Uber ride to airport", amount: 120, merchant: "Uber", category: "Transportation" },
-        { text: "Bought groceries at Walmart for $85.50", amount: 85.50, merchant: "Walmart", category: "Food & Dining" },
-        { text: "Movie tickets cost $32 at AMC theater", amount: 32, merchant: "AMC", category: "Entertainment" },
-      ];
-      
-      const randomTranscript = transcriptionTexts[Math.floor(Math.random() * transcriptionTexts.length)];
-      
-      const mockParsed = {
-        amount: randomTranscript.amount,
-        merchant: randomTranscript.merchant,
-        date: new Date().toISOString(),
-        category: randomTranscript.category,
-        source: 'voice',
-        transcription: randomTranscript.text,
-        description: randomTranscript.text,
-      };
-      setParsedData(mockParsed);
-      setStep(2);
-      toast.success('Voice transcribed (demo mode)');
+      console.error('Voice parsing error:', error);
+      const errorMsg = error.response?.data?.detail || error.message || 'Unknown error';
+      toast.error('Failed to parse: ' + errorMsg);
     } finally {
       setLoading(false);
     }
@@ -198,11 +238,30 @@ const AddVoice = () => {
     setParsedData({ ...parsedData, [field]: value });
   };
 
-  const formatTime = (seconds) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
+  if (!browserSupported) {
+    return (
+      <div className="max-w-3xl mx-auto">
+        <div className="card">
+          <div className="text-center py-8">
+            <p className="text-red-600 dark:text-red-400 mb-4 text-lg font-semibold">
+              ⚠️ Speech Recognition Not Supported
+            </p>
+            <p className="text-gray-600 dark:text-gray-400 mb-4">
+              Your browser doesn't support speech recognition.
+              <br />
+              Please use <strong>Chrome</strong>, <strong>Edge</strong>, or <strong>Safari</strong> for voice input.
+            </p>
+            <div className="text-sm text-gray-500 dark:text-gray-400 mb-6">
+              Current browser: {navigator.userAgent.split(' ').pop()}
+            </div>
+            <button onClick={() => navigate('/expenses')} className="btn-secondary">
+              Go Back
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <motion.div
@@ -246,7 +305,7 @@ const AddVoice = () => {
         </div>
       </div>
 
-      {/* Step 1: Record/Upload Audio */}
+      {/* Step 1: Voice Input */}
       {step === 1 && (
         <motion.div
           initial={{ opacity: 0, x: -20 }}
@@ -254,115 +313,76 @@ const AddVoice = () => {
           className="card space-y-6"
         >
           {/* Recording Interface */}
-          {!audioUrl && (
-            <div className="space-y-4">
-              {/* Record Button */}
-              <div className="border-2 border-dashed border-purple-300 dark:border-purple-700 rounded-xl p-12 text-center">
-                <div className="flex flex-col items-center">
-                  {!isRecording ? (
-                    <>
+          <div className="space-y-4">
+            {/* Record Button */}
+            <div className="border-2 border-dashed border-purple-300 dark:border-purple-700 rounded-xl p-12 text-center">
+              <div className="flex flex-col items-center">
+                {!isListening ? (
+                  <>
+                    <button
+                      onClick={startRecording}
+                      className="w-24 h-24 bg-purple-600 dark:bg-purple-500 text-white rounded-full hover:bg-purple-700 dark:hover:bg-purple-600 transition-all flex items-center justify-center shadow-lg hover:shadow-xl mb-4"
+                    >
+                      <Mic className="w-12 h-12" />
+                    </button>
+                    <p className="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                      🎤 Start Voice Input
+                    </p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      Click to start speaking your expense
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <div className="relative w-24 h-24 mb-4">
+                      <div className="absolute inset-0 bg-red-600 dark:bg-red-500 rounded-full animate-pulse opacity-75"></div>
                       <button
-                        onClick={startRecording}
-                        className="w-24 h-24 bg-purple-600 dark:bg-purple-500 text-white rounded-full hover:bg-purple-700 dark:hover:bg-purple-600 transition-all flex items-center justify-center shadow-lg hover:shadow-xl mb-4"
+                        onClick={stopRecording}
+                        className="relative w-24 h-24 bg-red-600 dark:bg-red-500 text-white rounded-full hover:bg-red-700 dark:hover:bg-red-600 transition-all flex items-center justify-center shadow-lg"
                       >
-                        <Mic className="w-12 h-12" />
+                        <Square className="w-10 h-10 fill-current" />
                       </button>
-                      <p className="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                        🎤 Record Voice Memo
-                      </p>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">
-                        Click to start recording your expense
-                      </p>
-                    </>
-                  ) : (
-                    <>
-                      <div className="relative w-24 h-24 mb-4">
-                        <div className="absolute inset-0 bg-red-600 dark:bg-red-500 rounded-full animate-pulse opacity-75"></div>
-                        <button
-                          onClick={stopRecording}
-                          className="relative w-24 h-24 bg-red-600 dark:bg-red-500 text-white rounded-full hover:bg-red-700 dark:hover:bg-red-600 transition-all flex items-center justify-center shadow-lg"
-                        >
-                          <Square className="w-10 h-10 fill-current" />
-                        </button>
-                      </div>
-                      <p className="text-lg font-semibold text-red-600 dark:text-red-400 mb-2">
-                        Recording...
-                      </p>
-                      <p className="text-2xl font-bold text-gray-900 dark:text-white font-mono">
-                        {formatTime(recordingTime)}
-                      </p>
-                      <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
-                        Click to stop recording
-                      </p>
-                    </>
-                  )}
-                </div>
+                    </div>
+                    <p className="text-lg font-semibold text-red-600 dark:text-red-400 mb-2">
+                      🎙️ Listening...
+                    </p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      Speak clearly. Click to stop.
+                    </p>
+                  </>
+                )}
               </div>
-
-              <div className="text-center text-gray-500 dark:text-gray-400 font-medium">OR</div>
-
-              {/* File Upload */}
-              <label className="block">
-                <div className="border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-xl p-8 text-center hover:border-purple-500 dark:hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-all cursor-pointer">
-                  <Upload className="w-16 h-16 text-gray-400 dark:text-gray-500 mx-auto mb-4" />
-                  <p className="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                    📁 Upload Audio File
-                  </p>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">
-                    MP3, WAV, M4A, or WebM (max. 10MB)
-                  </p>
-                </div>
-                <input
-                  type="file"
-                  accept="audio/*"
-                  onChange={handleFileSelect}
-                  className="hidden"
-                />
-              </label>
             </div>
-          )}
 
-          {/* Audio Playback */}
-          {audioUrl && (
-            <div className="space-y-4">
+            {/* Transcribed Text Display */}
+            {(transcribedText || interimTranscript) && (
               <div className="p-6 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-xl">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <p className="font-semibold text-purple-900 dark:text-purple-300">Audio Recorded</p>
-                    <p className="text-sm text-purple-600 dark:text-purple-400">Duration: {formatTime(recordingTime)}</p>
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex-1">
+                    <p className="font-semibold text-purple-900 dark:text-purple-300 mb-2">
+                      📝 Transcribed Text {isListening && '🔴'}
+                    </p>
+                    <p className="text-gray-700 dark:text-gray-300 leading-relaxed">
+                      <span className="font-medium">{transcribedText}</span>
+                      {interimTranscript && (
+                        <span className="text-purple-500 dark:text-purple-400 italic"> {interimTranscript}</span>
+                      )}
+                    </p>
                   </div>
                   <button
-                    onClick={deleteRecording}
-                    className="p-2 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors"
+                    onClick={clearTranscript}
+                    className="ml-4 p-2 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors"
+                    title="Clear transcript"
                   >
-                    <Trash2 className="w-5 h-5" />
+                    <X className="w-5 h-5" />
                   </button>
                 </div>
-
-                {/* Audio Player Controls */}
-                <div className="flex items-center gap-4">
-                  <button
-                    onClick={togglePlayback}
-                    className="p-3 bg-purple-600 dark:bg-purple-500 text-white rounded-full hover:bg-purple-700 dark:hover:bg-purple-600 transition-colors flex-shrink-0"
-                  >
-                    {isPlaying ? (
-                      <Pause className="w-6 h-6" />
-                    ) : (
-                      <Play className="w-6 h-6" />
-                    )}
-                  </button>
-                  
-                  <audio
-                    ref={audioPlayerRef}
-                    src={audioUrl}
-                    onEnded={handleAudioEnded}
-                    className="flex-1"
-                    controls
-                  />
-                </div>
+                <p className="text-xs text-purple-600 dark:text-purple-400">
+                  {isListening ? '🔴 Still listening... (speak clearly)' : '✓ Capture complete'}
+                </p>
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
           {/* Sample Inputs */}
           <div className="p-4 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg">
@@ -385,18 +405,18 @@ const AddVoice = () => {
             </button>
             <button
               onClick={handleParse}
-              disabled={loading || !audioFile}
+              disabled={loading || !transcribedText.trim()}
               className="btn-primary flex-1 flex items-center justify-center gap-2 disabled:opacity-50"
             >
               {loading ? (
                 <>
                   <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                  Transcribing...
+                  Parsing...
                 </>
               ) : (
                 <>
-                  <Mic className="w-5 h-5" />
-                  Transcribe Audio
+                  <CheckCircle className="w-5 h-5" />
+                  Parse Expense
                 </>
               )}
             </button>
@@ -415,21 +435,33 @@ const AddVoice = () => {
           <div className="flex items-center gap-3 p-4 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg">
             <CheckCircle className="w-6 h-6 text-purple-600 dark:text-purple-400 flex-shrink-0" />
             <div>
-              <p className="font-semibold text-purple-900 dark:text-purple-300">Audio Transcribed Successfully!</p>
+              <p className="font-semibold text-purple-900 dark:text-purple-300">Voice Parsed Successfully!</p>
               <p className="text-sm text-purple-700 dark:text-purple-400">Review and edit the details below before saving</p>
             </div>
           </div>
 
           {/* Transcription */}
           <div className="card">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">Transcription</h3>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">What You Said</h3>
             <div className="p-4 bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-lg">
-              <p className="text-gray-700 dark:text-gray-300 italic">"{parsedData.transcription}"</p>
+              <p className="text-gray-700 dark:text-gray-300 italic">"{parsedData.description || transcribedText}"</p>
             </div>
             
-            {audioUrl && (
-              <div className="mt-4">
-                <audio src={audioUrl} controls className="w-full" />
+            {/* Confidence Score */}
+            {parsedData.confidence && (
+              <div className="mt-3">
+                <div className="flex items-center justify-between text-sm mb-1">
+                  <span className="text-gray-600 dark:text-gray-400">Parsing Confidence</span>
+                  <span className="font-semibold text-purple-600 dark:text-purple-400">
+                    {(parsedData.confidence * 100).toFixed(0)}%
+                  </span>
+                </div>
+                <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                  <div
+                    className="bg-purple-600 dark:bg-purple-500 h-2 rounded-full transition-all"
+                    style={{ width: `${parsedData.confidence * 100}%` }}
+                  />
+                </div>
               </div>
             )}
           </div>

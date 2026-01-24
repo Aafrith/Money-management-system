@@ -158,14 +158,8 @@ export const parserService = {
     return response.data;
   },
 
-  parseVoice: async (audioFile) => {
-    const formData = new FormData();
-    formData.append('file', audioFile);
-    const response = await api.post('/parse/voice', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    });
+  parseVoiceText: async (text) => {
+    const response = await api.post('/parse/voice-text', { text });
     return response.data;
   },
 };

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Body
 from typing import Optional
 import re
 import json
@@ -11,7 +11,10 @@ from database import get_database
 from config import settings
 from gradio_client import Client
 import os
+from pydantic import BaseModel
 
+class VoiceTextRequest(BaseModel):
+    text: str
 
 router = APIRouter(prefix="/parse", tags=["Parsers"])
 
@@ -83,6 +86,75 @@ async def call_gradio_llm(sms_text: str) -> dict:
         raise HTTPException(
             status_code=500,
             detail=f"Error calling Gradio API: {error_msg}"
+        )
+
+@router.post("/voice-text", response_model=ParsedExpenseData)
+async def parse_voice_text(
+    request: VoiceTextRequest,
+    current_user: dict = Depends(get_current_active_user),
+    db = Depends(get_database)
+):
+    """
+    Parse voice-transcribed text to extract transaction details using Gradio LLM API
+    Same as SMS parsing but for voice input
+    """
+    try:
+        # Call Gradio LLM to parse voice text (same as SMS)
+        llm_result = await call_gradio_llm(request.text)
+        
+        # Extract parsed data from LLM result
+        parsed_data = ParsedExpenseData(
+            amount=llm_result.get('amount', 0.0),
+            merchant=llm_result.get('merchant', '') or llm_result.get('beneficiary', '') or 'Voice Transaction',
+            date=llm_result.get('date', datetime.now().strftime('%Y-%m-%d')),
+            category=llm_result.get('category', 'Other'),
+            confidence=0.8,
+            source='voice',
+            description=request.text,
+            items=[],
+            tax=0.0,
+            discount=0.0
+        )
+        
+        # Get user's categories to validate
+        categories = await db.categories.find({"user_id": str(current_user["_id"])}).to_list(length=None)
+        
+        # Validate category
+        if categories:
+            category_names = [cat["name"] for cat in categories]
+            if parsed_data.category not in category_names:
+                # Try case-insensitive match
+                matched = None
+                for cat_name in category_names:
+                    if cat_name.lower() == parsed_data.category.lower():
+                        matched = cat_name
+                        break
+                if matched:
+                    parsed_data.category = matched
+                else:
+                    parsed_data.category = categories[0]["name"]
+        
+        return parsed_data
+        
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=504,
+            detail="Gradio API request timed out. The LLM service may be overloaded. Please try again."
+        )
+    except Exception as e:
+        print(f"Voice text parsing error: {str(e)}")
+        # Return basic parsed data as fallback
+        return ParsedExpenseData(
+            amount=0.0,
+            merchant='Voice Transaction',
+            date=datetime.now().strftime('%Y-%m-%d'),
+            category='Other',
+            confidence=0.3,
+            source='voice',
+            description=request.text,
+            items=[],
+            tax=0.0,
+            discount=0.0
         )
 
 @router.post("/sms", response_model=ParsedExpenseData)
