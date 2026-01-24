@@ -38,23 +38,37 @@ const AddSMS = () => {
     setLoading(true);
     try {
       const result = await parserService.parseSMS(smsText);
-      setParsedData(result);
-      setStep(2);
-      toast.success('SMS parsed successfully!');
-    } catch (error) {
-      // Mock parsing for demo
-      const mockParsed = {
-        amount: 45.99,
-        currency: 'USD',
-        merchant: 'Starbucks',
-        date: new Date().toISOString(),
-        category: 'Food & Dining',
+      
+      // Transform the response to ensure all fields are properly formatted
+      const transformedData = {
+        amount: result.amount || 0,
+        merchant: result.merchant || 'Unknown Merchant',
+        date: result.date || new Date().toISOString(),
+        category: result.category || (categories.length > 0 ? categories[0].name : ''),
+        description: result.description || '',
         source: 'sms',
         raw_input: smsText,
+        confidence: result.confidence || 0.0
       };
-      setParsedData(mockParsed);
+      
+      setParsedData(transformedData);
       setStep(2);
-      toast.success('SMS parsed (demo mode)');
+      
+      // Show success message with confidence level
+      const confidencePercent = Math.round(transformedData.confidence * 100);
+      toast.success(`SMS parsed successfully! (Confidence: ${confidencePercent}%)`);
+    } catch (error) {
+      console.error('SMS parsing error:', error);
+      const errorMessage = error.response?.data?.detail || error.message || 'Failed to parse SMS';
+      
+      // Check for specific error types
+      if (error.response?.status === 503) {
+        toast.error('LLM API not configured. Please contact administrator.', { duration: 5000 });
+      } else if (error.response?.status === 504 || errorMessage.includes('timeout') || errorMessage.includes('timed out')) {
+        toast.error('⏱️ Request timed out. The AI is taking too long. Please try again.', { duration: 5000 });
+      } else {
+        toast.error(`Failed to parse SMS: ${errorMessage}`, { duration: 4000 });
+      }
     } finally {
       setLoading(false);
     }
@@ -63,7 +77,17 @@ const AddSMS = () => {
   const handleSave = async () => {
     setLoading(true);
     try {
-      const newExpense = await expenseService.create(parsedData);
+      // Prepare expense data for API
+      const expenseData = {
+        merchant: parsedData.merchant,
+        amount: parseFloat(parsedData.amount),
+        category: parsedData.category,
+        date: parsedData.date,
+        description: parsedData.description || '',
+        source: 'sms'
+      };
+      
+      const newExpense = await expenseService.create(expenseData);
       addExpense(newExpense);
       toast.success('Expense added successfully!');
       navigate('/expenses');
@@ -203,10 +227,20 @@ const AddSMS = () => {
           {/* Success Message */}
           <div className="flex items-center gap-3 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
             <CheckCircle className="w-6 h-6 text-green-600 dark:text-green-400 flex-shrink-0" />
-            <div>
+            <div className="flex-1">
               <p className="font-semibold text-green-900 dark:text-green-300">SMS Parsed Successfully!</p>
               <p className="text-sm text-green-700 dark:text-green-400">Review and edit the details below before saving</p>
             </div>
+            {parsedData.confidence !== undefined && (
+              <div className="flex items-center gap-2">
+                <div className="text-right">
+                  <p className="text-sm font-medium text-green-900 dark:text-green-300">
+                    {Math.round(parsedData.confidence * 100)}%
+                  </p>
+                  <p className="text-xs text-green-700 dark:text-green-400">Confidence</p>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Parsed Data Form */}

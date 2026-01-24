@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     GROQ_API_KEY: Optional[str] = None
     OPENAI_API_KEY: Optional[str] = None
     
+    # Gradio API for LLM SMS Parsing
+    GRADIO_API_URL: Optional[str] = None
+    
+    # YOLO Model for Receipt Parsing
+    YOLO_MODEL_PATH: Optional[str] = None
+    
     # Application
     DEBUG: bool = True
     PORT: int = 8000

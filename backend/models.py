@@ -114,6 +114,10 @@ class ExpenseResponse(ExpenseBase):
 class SMSParseRequest(BaseModel):
     text: str
 
+class LineItem(BaseModel):
+    product: str
+    price: Optional[float] = None
+
 class ParsedExpenseData(BaseModel):
     merchant: Optional[str] = None
     amount: Optional[float] = None
@@ -121,6 +125,11 @@ class ParsedExpenseData(BaseModel):
     date: Optional[datetime] = None
     description: Optional[str] = None
     confidence: float = 0.0
+    # Receipt-specific fields
+    items: Optional[List[LineItem]] = None
+    tax: Optional[float] = None
+    discount: Optional[float] = None
+    time: Optional[str] = None
 
 # Stats Models
 class CategoryStat(BaseModel):

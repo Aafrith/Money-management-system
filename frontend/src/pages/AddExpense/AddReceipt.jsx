@@ -107,32 +107,40 @@ const AddReceipt = () => {
     setLoading(true);
     try {
       const result = await parserService.parseReceipt(image);
-      setParsedData(result);
-      setStep(2);
-      toast.success('Receipt parsed successfully!');
-    } catch (error) {
-      // Mock parsing for demo
-      const mockParsed = {
-        amount: 78.45,
-        currency: 'USD',
-        merchant: 'Whole Foods Market',
-        date: new Date().toISOString(),
-        category: 'Food & Dining',
+      
+      // Transform the YOLO response to ensure all fields are properly formatted
+      const transformedData = {
+        amount: result.amount || 0,
+        merchant: result.merchant || 'Unknown Merchant',
+        date: result.date || new Date().toISOString(),
+        category: result.category || (categories.length > 0 ? categories[0].name : ''),
+        description: result.description || '',
         source: 'receipt',
-        items: [
-          { name: 'Organic Bananas', price: 4.99 },
-          { name: 'Milk', price: 5.99 },
-          { name: 'Bread', price: 3.50 },
-          { name: 'Eggs', price: 6.99 },
-          { name: 'Vegetables', price: 12.99 },
-          { name: 'Fruits', price: 15.50 },
-          { name: 'Chicken', price: 18.49 },
-        ],
-        description: 'Grocery shopping at Whole Foods',
+        items: (result.items || []).map(item => ({
+          name: item.product || 'Unknown Item',
+          price: item.price || 0
+        })),
+        tax: result.tax || 0,
+        discount: result.discount || 0,
+        time: result.time || '',
+        confidence: result.confidence || 0.0
       };
-      setParsedData(mockParsed);
+      
+      setParsedData(transformedData);
       setStep(2);
-      toast.success('Receipt parsed (demo mode)');
+      
+      // Show success message with confidence level
+      const confidencePercent = Math.round(transformedData.confidence * 100);
+      toast.success(`Receipt parsed successfully! (Confidence: ${confidencePercent}%)`);
+    } catch (error) {
+      console.error('Receipt parsing error:', error);
+      const errorMessage = error.response?.data?.detail || error.message || 'Failed to parse receipt';
+      toast.error(errorMessage);
+      
+      // If it's a configuration error, show more details
+      if (error.response?.status === 503) {
+        toast.error('YOLO model not configured. Please contact administrator.', { duration: 5000 });
+      }
     } finally {
       setLoading(false);
     }
@@ -141,7 +149,17 @@ const AddReceipt = () => {
   const handleSave = async () => {
     setLoading(true);
     try {
-      const newExpense = await expenseService.create(parsedData);
+      // Prepare expense data for API
+      const expenseData = {
+        merchant: parsedData.merchant,
+        amount: parseFloat(parsedData.amount),
+        category: parsedData.category,
+        date: parsedData.date,
+        description: parsedData.description || '',
+        source: 'receipt'
+      };
+      
+      const newExpense = await expenseService.create(expenseData);
       addExpense(newExpense);
       toast.success('Expense added successfully!');
       navigate('/expenses');
@@ -352,10 +370,20 @@ const AddReceipt = () => {
           {/* Success Message */}
           <div className="flex items-center gap-3 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
             <CheckCircle className="w-6 h-6 text-green-600 dark:text-green-400 flex-shrink-0" />
-            <div>
+            <div className="flex-1">
               <p className="font-semibold text-green-900 dark:text-green-300">Receipt Parsed Successfully!</p>
               <p className="text-sm text-green-700 dark:text-green-400">Review and edit the details below before saving</p>
             </div>
+            {parsedData.confidence !== undefined && (
+              <div className="flex items-center gap-2">
+                <div className="text-right">
+                  <p className="text-sm font-medium text-green-900 dark:text-green-300">
+                    {Math.round(parsedData.confidence * 100)}%
+                  </p>
+                  <p className="text-xs text-green-700 dark:text-green-400">Confidence</p>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -449,17 +477,49 @@ const AddReceipt = () => {
           {/* Itemized List */}
           {parsedData.items && parsedData.items.length > 0 && (
             <div className="card">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Itemized Details</h3>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Itemized Details ({parsedData.items.length} items)</h3>
               <div className="space-y-2">
                 {parsedData.items.map((item, index) => (
                   <div key={index} className="flex justify-between items-center p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
                     <span className="text-gray-700 dark:text-gray-300 truncate flex-1">{item.name}</span>
-                    <span className="font-semibold text-gray-900 dark:text-white ml-2">${item.price.toFixed(2)}</span>
+                    <span className="font-semibold text-gray-900 dark:text-white ml-2">
+                      ${typeof item.price === 'number' ? item.price.toFixed(2) : '0.00'}
+                    </span>
                   </div>
                 ))}
+                
+                {/* Subtotal */}
+                {parsedData.items.length > 0 && (
+                  <div className="flex justify-between items-center p-3 bg-gray-100 dark:bg-gray-700/50 rounded-lg mt-2">
+                    <span className="font-medium text-gray-900 dark:text-white">Subtotal</span>
+                    <span className="font-medium text-gray-900 dark:text-white">
+                      ${parsedData.items.reduce((sum, item) => sum + (typeof item.price === 'number' ? item.price : 0), 0).toFixed(2)}
+                    </span>
+                  </div>
+                )}
+                
+                {/* Tax */}
+                {parsedData.tax > 0 && (
+                  <div className="flex justify-between items-center p-3 bg-blue-50 dark:bg-blue-900/30 rounded-lg">
+                    <span className="text-gray-700 dark:text-gray-300">Tax</span>
+                    <span className="text-gray-900 dark:text-white">+${parsedData.tax.toFixed(2)}</span>
+                  </div>
+                )}
+                
+                {/* Discount */}
+                {parsedData.discount > 0 && (
+                  <div className="flex justify-between items-center p-3 bg-orange-50 dark:bg-orange-900/30 rounded-lg">
+                    <span className="text-gray-700 dark:text-gray-300">Discount</span>
+                    <span className="text-gray-900 dark:text-white">-${parsedData.discount.toFixed(2)}</span>
+                  </div>
+                )}
+                
+                {/* Total */}
                 <div className="flex justify-between items-center p-3 bg-green-50 dark:bg-green-900/30 border-t-2 border-green-600 dark:border-green-500 rounded-lg mt-3">
                   <span className="font-bold text-gray-900 dark:text-white">Total</span>
-                  <span className="font-bold text-green-600 dark:text-green-400 text-lg">${parsedData.amount.toFixed(2)}</span>
+                  <span className="font-bold text-green-600 dark:text-green-400 text-lg">
+                    ${typeof parsedData.amount === 'number' ? parsedData.amount.toFixed(2) : '0.00'}
+                  </span>
                 </div>
               </div>
             </div>
