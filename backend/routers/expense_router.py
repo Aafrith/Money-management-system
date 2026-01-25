@@ -68,20 +68,24 @@ async def get_expense_stats(
     """Get expense statistics for dashboard"""
     user_id = str(current_user["_id"])
     
-    # Calculate date range
-    end_date = datetime.utcnow()
+    # Calculate date range - use end of today to include all of today's expenses
+    now = datetime.utcnow()
+    end_date = now.replace(hour=23, minute=59, second=59, microsecond=999999)
+    
     if time_range == "7days":
-        start_date = end_date - timedelta(days=7)
+        start_date = (now - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
         prev_start = start_date - timedelta(days=7)
     elif time_range == "30days":
-        start_date = end_date - timedelta(days=30)
+        start_date = (now - timedelta(days=30)).replace(hour=0, minute=0, second=0, microsecond=0)
         prev_start = start_date - timedelta(days=30)
     elif time_range == "90days":
-        start_date = end_date - timedelta(days=90)
+        start_date = (now - timedelta(days=90)).replace(hour=0, minute=0, second=0, microsecond=0)
         prev_start = start_date - timedelta(days=90)
     else:  # year
-        start_date = end_date - timedelta(days=365)
+        start_date = (now - timedelta(days=365)).replace(hour=0, minute=0, second=0, microsecond=0)
         prev_start = start_date - timedelta(days=365)
+    
+    prev_end = start_date - timedelta(microseconds=1)
     
     # Get current period expenses
     current_expenses = await db.expenses.find({
@@ -92,7 +96,7 @@ async def get_expense_stats(
     # Get previous period expenses for comparison
     prev_expenses = await db.expenses.find({
         "user_id": user_id,
-        "date": {"$gte": prev_start, "$lt": start_date}
+        "date": {"$gte": prev_start, "$lte": prev_end}
     }).to_list(length=None)
     
     # Calculate totals

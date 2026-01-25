@@ -125,6 +125,7 @@ class ParsedExpenseData(BaseModel):
     date: Optional[datetime] = None
     description: Optional[str] = None
     confidence: float = 0.0
+    source: str = "manual"  # manual, sms, receipt, voice
     # Receipt-specific fields
     items: Optional[List[LineItem]] = None
     tax: Optional[float] = None

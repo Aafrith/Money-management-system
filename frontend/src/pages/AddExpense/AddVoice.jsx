@@ -5,6 +5,7 @@ import { Mic, Upload, CheckCircle, Square, Play, Pause, Trash2, X } from 'lucide
 import { parserService, expenseService, categoryService } from '../../services';
 import { useExpenseStore } from '../../store';
 import toast from 'react-hot-toast';
+
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 
 // Polyfill for speech recognition
@@ -14,7 +15,7 @@ if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) 
 
 const AddVoice = () => {
   const navigate = useNavigate();
-  const addExpense = useExpenseStore((state) => state.addExpense);
+  const { addExpense, triggerRefresh } = useExpenseStore();
   
   const [transcribedText, setTranscribedText] = useState('');
   const [loading, setLoading] = useState(false);
@@ -223,10 +224,16 @@ const AddVoice = () => {
   const handleSave = async () => {
     setLoading(true);
     try {
-      const newExpense = await expenseService.create(parsedData);
+      // Ensure source is set to 'voice' when saving
+      const expenseData = { ...parsedData, source: 'voice' };
+      const newExpense = await expenseService.create(expenseData);
       addExpense(newExpense);
+      triggerRefresh(); // Explicitly trigger refresh
       toast.success('Expense added successfully!');
-      navigate('/expenses');
+      // Small delay to ensure store is updated before navigation
+      await new Promise(resolve => setTimeout(resolve, 100));
+      // Navigate to dashboard to see updated stats
+      navigate('/dashboard');
     } catch (error) {
       toast.error('Failed to add expense: ' + (error.response?.data?.detail || error.message));
     } finally {

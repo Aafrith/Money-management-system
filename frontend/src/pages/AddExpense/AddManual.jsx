@@ -8,7 +8,7 @@ import toast from 'react-hot-toast';
 
 const AddManual = () => {
   const navigate = useNavigate();
-  const addExpense = useExpenseStore((state) => state.addExpense);
+  const { addExpense, triggerRefresh } = useExpenseStore();
   const [loading, setLoading] = useState(false);
   const [categories, setCategories] = useState([]);
   const [formData, setFormData] = useState({
@@ -58,8 +58,12 @@ const AddManual = () => {
         source: 'manual',
       });
       addExpense(newExpense); // Add to store to trigger dashboard refresh
+      triggerRefresh(); // Explicitly trigger refresh
       toast.success('Expense added successfully!');
-      navigate('/expenses');
+      // Small delay to ensure store is updated before navigation
+      await new Promise(resolve => setTimeout(resolve, 100));
+      // Navigate to dashboard to see updated stats
+      navigate('/dashboard');
     } catch (error) {
       console.error('Error creating expense:', error);
       toast.error('Failed to add expense: ' + (error.response?.data?.detail || error.message));
