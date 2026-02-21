@@ -190,6 +190,32 @@ export const userService = {
     localStorage.removeItem('user');
     return response.data;
   },
+
+  // Webhook management
+  getWebhook: async () => {
+    const response = await api.get('/users/me/webhook');
+    return response.data;
+  },
+
+  generateWebhookSecret: async () => {
+    const response = await api.post('/users/me/webhook', { action: 'generate' });
+    return response.data;
+  },
+
+  disableWebhook: async () => {
+    const response = await api.post('/users/me/webhook', { action: 'disable' });
+    return response.data;
+  },
+
+  getSMSLogs: async (limit = 20) => {
+    const response = await api.get('/users/me/webhook/sms-logs', { params: { limit } });
+    return response.data;
+  },
+
+  getWebhookDebug: async () => {
+    const response = await api.get('/users/me/webhook/debug');
+    return response.data;
+  },
 };
 
 export const adminService = {

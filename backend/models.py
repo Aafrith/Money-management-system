@@ -19,6 +19,19 @@ class ExpenseSource(str, Enum):
     RECEIPT = "receipt"
     VOICE = "voice"
 
+# Webhook Models
+class WebhookConfig(BaseModel):
+    enabled: bool = False
+    secret: Optional[str] = None
+    
+    class Config:
+        json_encoders = {}
+
+class WebhookResponse(BaseModel):
+    enabled: bool
+    url: str  # Will be constructed in API
+    last_received: Optional[datetime] = None
+
 # User Models
 class UserBase(BaseModel):
     name: str = Field(..., min_length=2, max_length=100)
@@ -47,6 +60,8 @@ class UserResponse(UserBase):
     created_at: datetime
     last_active: Optional[datetime] = None
     avatar: Optional[str] = None
+    webhook_enabled: bool = False
+    webhook_last_received: Optional[datetime] = None
     
     class Config:
         populate_by_name = True

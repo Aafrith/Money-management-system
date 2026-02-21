@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     # YOLO Model for Receipt Parsing
     YOLO_MODEL_PATH: Optional[str] = None
     
+    # Webhook Configuration
+    TEXTBEE_WEBHOOK_SECRET: Optional[str] = None
+    SMS_DEFAULT_CATEGORY: str = "Other"
+    
     # Application
     DEBUG: bool = True
     PORT: int = 8000

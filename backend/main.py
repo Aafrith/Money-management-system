@@ -11,7 +11,8 @@ from routers import (
     category_router,
     parser_router,
     admin_router,
-    user_router
+    user_router,
+    webhook_router
 )
 
 # Configure logging
@@ -55,7 +56,8 @@ app.add_middleware(
         "http://localhost:4173",
         "http://127.0.0.1:5173",
         "http://127.0.0.1:3000",
-        "http://127.0.0.1:3001"
+        "http://127.0.0.1:3001", 
+        "*"  # Allow all origins for development, restrict in production
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -99,6 +101,7 @@ app.include_router(category_router.router, prefix="/api")
 app.include_router(parser_router.router, prefix="/api")
 app.include_router(admin_router.router, prefix="/api")
 app.include_router(user_router.router, prefix="/api")
+app.include_router(webhook_router.router)  # Webhooks don't need /api prefix
 
 if __name__ == "__main__":
     import uvicorn
