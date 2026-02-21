@@ -1,16 +1,19 @@
 import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { 
   User, Mail, Phone, Calendar, Shield, Edit, Camera,
   DollarSign, Receipt, TrendingUp, Award, Target
 } from 'lucide-react';
-import { useAuthStore } from '../../store';
+import { useAuthStore, useExpenseStore } from '../../store';
 import { userService, expenseService } from '../../services';
 import toast from 'react-hot-toast';
 import { formatCurrency } from '../../utils/currency';
 
 const UserProfile = () => {
   const { user, updateUser } = useAuthStore();
+  const lastUpdated = useExpenseStore((state) => state.lastUpdated);
+  const location = useLocation();
   const [isEditing, setIsEditing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [profileData, setProfileData] = useState({
@@ -38,19 +41,23 @@ const UserProfile = () => {
         avatar: user.avatar || null,
       });
     }
-    loadStats();
   }, [user]);
+
+  // Load stats when navigating to this page or when expenses are updated
+  useEffect(() => {
+    loadStats();
+  }, [location.pathname, lastUpdated]);
 
   const loadStats = async () => {
     try {
       const [expensesData, dashStats] = await Promise.all([
         expenseService.getAll(),
-        expenseService.getStats('30days')
+        expenseService.getStats({ range: '30days' })
       ]);
       
       const totalExpenses = expensesData.length;
-      const totalAmount = dashStats.total_amount || 0;
-      const avgPerMonth = totalAmount / (totalExpenses > 0 ? 1 : 1);
+      const totalAmount = dashStats.totalExpenses || dashStats.total_amount || 0;
+      const avgPerMonth = totalExpenses > 0 ? totalAmount / Math.max(1, Math.ceil(totalExpenses / 30)) : 0;
       const categoriesUsed = new Set(expensesData.map(e => e.category)).size;
       
       setStats({
@@ -60,7 +67,7 @@ const UserProfile = () => {
         categoriesUsed,
         streakDays: 45, // TODO: Calculate actual streak
         savingsGoal: 50000,
-        currentSavings: dashStats.total_amount * 0.15 || 0, // 15% savings estimate
+        currentSavings: totalAmount * 0.15 || 0, // 15% savings estimate
       });
     } catch (error) {
       console.error('Error loading stats:', error);

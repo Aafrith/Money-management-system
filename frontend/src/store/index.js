@@ -29,28 +29,34 @@ export const useAuthStore = create((set) => ({
   },
 }));
 
-export const useExpenseStore = create((set) => ({
+export const useExpenseStore = create((set, get) => ({
   expenses: [],
   stats: null,
   loading: false,
+  lastUpdated: Date.now(),
   
-  setExpenses: (expenses) => set({ expenses }),
+  setExpenses: (expenses) => set({ expenses, lastUpdated: Date.now() }),
   setStats: (stats) => set({ stats }),
   setLoading: (loading) => set({ loading }),
   
   addExpense: (expense) => set((state) => ({ 
-    expenses: [expense, ...state.expenses] 
+    expenses: [expense, ...state.expenses],
+    lastUpdated: Date.now()
   })),
   
   updateExpense: (id, updatedExpense) => set((state) => ({
     expenses: state.expenses.map((exp) => 
       (exp._id === id || exp.id === id) ? { ...exp, ...updatedExpense } : exp
     ),
+    lastUpdated: Date.now()
   })),
   
   deleteExpense: (id) => set((state) => ({
     expenses: state.expenses.filter((exp) => exp._id !== id && exp.id !== id),
+    lastUpdated: Date.now()
   })),
+
+  triggerRefresh: () => set({ lastUpdated: Date.now() }),
 }));
 
 export const useCategoryStore = create((set) => ({

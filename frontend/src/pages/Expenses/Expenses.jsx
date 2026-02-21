@@ -13,6 +13,8 @@ import {
   Image,
   Mic,
   PlusCircle,
+  X,
+  Save,
 } from 'lucide-react';
 import { expenseService, categoryService } from '../../services';
 import { useExpenseStore, useCategoryStore } from '../../store';
@@ -20,9 +22,11 @@ import toast from 'react-hot-toast';
 import { format } from 'date-fns';
 
 const Expenses = () => {
-  const { expenses, setExpenses, deleteExpense } = useExpenseStore();
+  const { expenses, setExpenses, deleteExpense, updateExpense } = useExpenseStore();
   const { categories, setCategories } = useCategoryStore();
   const [loading, setLoading] = useState(true);
+  const [editingExpense, setEditingExpense] = useState(null);
+  const [editForm, setEditForm] = useState({});
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState('all');
   const [filterSource, setFilterSource] = useState('all');
@@ -119,6 +123,37 @@ const Expenses = () => {
     } catch (error) {
       console.error('Error deleting expense:', error);
       toast.error('Failed to delete expense: ' + (error.response?.data?.detail || error.message));
+    }
+  };
+
+  const handleEdit = (expense) => {
+    setEditingExpense(expense);
+    setEditForm({
+      merchant: expense.merchant,
+      amount: expense.amount,
+      category: expense.category,
+      date: expense.date ? expense.date.split('T')[0] : new Date().toISOString().split('T')[0],
+      description: expense.description || '',
+    });
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingExpense) return;
+    
+    try {
+      const id = editingExpense._id || editingExpense.id;
+      const updatedExpense = await expenseService.update(id, {
+        ...editForm,
+        amount: parseFloat(editForm.amount),
+        date: new Date(editForm.date).toISOString(),
+      });
+      updateExpense(id, updatedExpense);
+      setEditingExpense(null);
+      fetchData(); // Refresh the list
+      toast.success('Expense updated successfully');
+    } catch (error) {
+      console.error('Error updating expense:', error);
+      toast.error('Failed to update expense: ' + (error.response?.data?.detail || error.message));
     }
   };
 
@@ -320,7 +355,10 @@ const Expenses = () => {
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">
+                    <button 
+                      onClick={() => handleEdit(expense)}
+                      className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                    >
                       <Edit2 className="w-5 h-5 text-gray-600 dark:text-gray-400" />
                     </button>
                     <button
@@ -336,6 +374,105 @@ const Expenses = () => {
           ))
         )}
       </div>
+
+      {/* Edit Modal */}
+      {editingExpense && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md"
+          >
+            <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Edit Expense</h3>
+              <button
+                onClick={() => setEditingExpense(null)}
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
+              >
+                <X className="w-5 h-5 text-gray-600 dark:text-gray-400" />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Merchant
+                </label>
+                <input
+                  type="text"
+                  value={editForm.merchant}
+                  onChange={(e) => setEditForm({ ...editForm, merchant: e.target.value })}
+                  className="input-field"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Amount
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={editForm.amount}
+                  onChange={(e) => setEditForm({ ...editForm, amount: e.target.value })}
+                  className="input-field"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Category
+                </label>
+                <select
+                  value={editForm.category}
+                  onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
+                  className="input-field"
+                >
+                  {categories.map((cat) => (
+                    <option key={cat._id || cat.id} value={cat.name}>
+                      {cat.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Date
+                </label>
+                <input
+                  type="date"
+                  value={editForm.date}
+                  onChange={(e) => setEditForm({ ...editForm, date: e.target.value })}
+                  className="input-field"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Description
+                </label>
+                <textarea
+                  value={editForm.description}
+                  onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                  className="input-field"
+                  rows={2}
+                />
+              </div>
+            </div>
+            <div className="flex gap-3 p-4 border-t border-gray-200 dark:border-gray-700">
+              <button
+                onClick={() => setEditingExpense(null)}
+                className="btn-secondary flex-1"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveEdit}
+                className="btn-primary flex-1 flex items-center justify-center gap-2"
+              >
+                <Save className="w-5 h-5" />
+                Save Changes
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </motion.div>
   );
 };

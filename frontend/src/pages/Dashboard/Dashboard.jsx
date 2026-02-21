@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   TrendingUp,
   TrendingDown,
@@ -11,6 +12,7 @@ import {
   PlusCircle,
   ArrowUpRight,
   ArrowDownRight,
+  RefreshCw,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -36,16 +38,20 @@ const Dashboard = () => {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState('7days');
-  const expenses = useExpenseStore((state) => state.expenses);
-
-  useEffect(() => {
-    fetchDashboardData();
-  }, [timeRange, expenses.length]); // Re-fetch when expenses change
+  const lastUpdated = useExpenseStore((state) => state.lastUpdated);
+  const location = useLocation();
+  const fetchIdRef = useRef(0);
 
   const fetchDashboardData = async () => {
+    const currentFetchId = ++fetchIdRef.current;
+    
     try {
       setLoading(true);
-      const expenseStats = await expenseService.getStats({ range: timeRange });
+      // Add cache-busting timestamp to force fresh data
+      const expenseStats = await expenseService.getStats({ range: timeRange, _t: Date.now() });
+      
+      // Only update if this is still the latest fetch
+      if (currentFetchId !== fetchIdRef.current) return;
       
       // Backend already returns the correct structure with camelCase
       // Just need to map icons for source breakdown
@@ -73,12 +79,46 @@ const Dashboard = () => {
       setStats(mappedStats);
     } catch (error) {
       console.error('Error loading dashboard:', error);
-      toast.error('Failed to load dashboard data');
-      setStats(null);
+      if (currentFetchId === fetchIdRef.current) {
+        toast.error('Failed to load dashboard data');
+        setStats(null);
+      }
     } finally {
-      setLoading(false);
+      if (currentFetchId === fetchIdRef.current) {
+        setLoading(false);
+      }
     }
   };
+
+  // Fetch when time range changes
+  useEffect(() => {
+    fetchDashboardData();
+  }, [timeRange]);
+
+  // Refresh when navigating to dashboard
+  useEffect(() => {
+    if (location.pathname === '/dashboard' || location.pathname === '/') {
+      fetchDashboardData();
+    }
+  }, [location.pathname, location.key]);
+
+  // Refresh when expenses are updated in store (critical for after adding expense)
+  useEffect(() => {
+    // Small delay to ensure backend has committed the new expense
+    const timer = setTimeout(() => {
+      fetchDashboardData();
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [lastUpdated]);
+
+  // Refresh when window gets focus (user returns to tab)
+  useEffect(() => {
+    const handleFocus = () => {
+      fetchDashboardData();
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [fetchDashboardData]);
 
   const getMockStats = () => ({
     totalExpenses: 12450.50,
@@ -188,7 +228,15 @@ const Dashboard = () => {
           <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900 dark:text-white">Dashboard</h1>
           <p className="text-gray-600 dark:text-gray-400 mt-1">Welcome back! Here's your expense overview.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          <button
+            onClick={() => fetchDashboardData()}
+            disabled={loading}
+            className="p-2 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-all disabled:opacity-50"
+            title="Refresh"
+          >
+            <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
+          </button>
           {['7days', '30days', '90days'].map((range) => (
             <button
               key={range}

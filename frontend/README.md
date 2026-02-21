@@ -72,6 +72,7 @@ frontend/
 1. Install dependencies:
 ```bash
 npm install
+npm install react-speech-recognition
 ```
 
 2. Create environment file:

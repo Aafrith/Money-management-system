@@ -9,7 +9,7 @@ from models import SMSParseRequest, ParsedExpenseData, LineItem
 from auth import get_current_active_user
 from database import get_database
 from config import settings
-from gradio_client import Client
+import httpx
 import os
 from pydantic import BaseModel
 
@@ -30,24 +30,63 @@ async def call_gradio_llm(sms_text: str) -> dict:
         )
     
     try:
-        # Initialize Gradio Client
-        client = Client(settings.GRADIO_API_URL)
+        # Use httpx to call Gradio API directly
+        base_url = settings.GRADIO_API_URL.rstrip('/')
+        llm_response = None
         
-        # Call the predict endpoint with the SMS text
-        # Using a longer timeout for LLM processing (60 seconds)
-        # Run Gradio client in thread pool since it's synchronous
-        loop = asyncio.get_event_loop()
-        with ThreadPoolExecutor() as executor:
-            result = await asyncio.wait_for(
-                loop.run_in_executor(
-                    executor,
-                    lambda: client.predict(message=sms_text, api_name="/predict")
-                ),
-                timeout=60.0  # 60 second timeout
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            # Gradio 5.x uses /gradio_api/call/predict then fetches result
+            # Step 1: Submit the request
+            call_response = await client.post(
+                f"{base_url}/gradio_api/call/predict",
+                json={"data": [sms_text]}
             )
-        
-        # The result might be a string or already parsed
-        llm_response = result
+            
+            if call_response.status_code == 200:
+                event_id = call_response.json().get("event_id")
+                if event_id:
+                    # Step 2: Get the result using SSE
+                    max_attempts = 60
+                    for attempt in range(max_attempts):
+                        result_response = await client.get(
+                            f"{base_url}/gradio_api/call/predict/{event_id}",
+                            timeout=120.0
+                        )
+                        
+                        if result_response.status_code == 200:
+                            # Parse SSE response
+                            for line in result_response.text.split('\n'):
+                                if line.startswith('data:'):
+                                    try:
+                                        data_str = line[5:].strip()
+                                        if data_str:
+                                            event_data = json.loads(data_str)
+                                            # Result is directly in the array
+                                            if isinstance(event_data, list) and len(event_data) > 0:
+                                                llm_response = event_data[0]
+                                                break
+                                    except json.JSONDecodeError:
+                                        continue
+                            if llm_response is not None:
+                                break
+                        await asyncio.sleep(1)
+            
+            # Fallback: Try older /run/predict endpoint
+            if llm_response is None:
+                response = await client.post(
+                    f"{base_url}/run/predict",
+                    json={"data": [sms_text]}
+                )
+                if response.status_code == 200:
+                    result = response.json()
+                    if isinstance(result, dict) and "data" in result:
+                        llm_response = result["data"][0] if result["data"] else ""
+            
+            if llm_response is None:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to get response from Gradio API"
+                )
         
         # If the response is a string containing JSON, parse it
         if isinstance(llm_response, str):
@@ -65,7 +104,7 @@ async def call_gradio_llm(sms_text: str) -> dict:
                 
         return parsed_json
         
-    except asyncio.TimeoutError:
+    except httpx.TimeoutException:
         raise HTTPException(
             status_code=504,
             detail="Gradio API request timed out after 60 seconds. The LLM is taking too long to respond."
@@ -75,6 +114,8 @@ async def call_gradio_llm(sms_text: str) -> dict:
             status_code=500,
             detail=f"Failed to parse Gradio API response as JSON: {str(e)}. Response: {llm_response[:200] if isinstance(llm_response, str) else str(llm_response)}"
         )
+    except HTTPException:
+        raise
     except Exception as e:
         error_msg = str(e)
         # Check for timeout in error message
@@ -102,11 +143,23 @@ async def parse_voice_text(
         # Call Gradio LLM to parse voice text (same as SMS)
         llm_result = await call_gradio_llm(request.text)
         
+        # Parse date from LLM result - convert string to datetime
+        date_value = datetime.now()
+        date_str = llm_result.get('date', '')
+        if date_str and date_str != 'not specified':
+            try:
+                date_value = datetime.strptime(date_str, '%Y-%m-%d')
+            except ValueError:
+                try:
+                    date_value = datetime.strptime(date_str, '%d-%m-%Y')
+                except ValueError:
+                    date_value = datetime.now()
+        
         # Extract parsed data from LLM result
         parsed_data = ParsedExpenseData(
             amount=llm_result.get('amount', 0.0),
             merchant=llm_result.get('merchant', '') or llm_result.get('beneficiary', '') or 'Voice Transaction',
-            date=llm_result.get('date', datetime.now().strftime('%Y-%m-%d')),
+            date=date_value,
             category=llm_result.get('category', 'Other'),
             confidence=0.8,
             source='voice',
@@ -147,7 +200,7 @@ async def parse_voice_text(
         return ParsedExpenseData(
             amount=0.0,
             merchant='Voice Transaction',
-            date=datetime.now().strftime('%Y-%m-%d'),
+            date=datetime.now(),
             category='Other',
             confidence=0.3,
             source='voice',

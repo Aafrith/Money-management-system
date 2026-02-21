@@ -8,7 +8,7 @@ import toast from 'react-hot-toast';
 
 const AddReceipt = () => {
   const navigate = useNavigate();
-  const addExpense = useExpenseStore((state) => state.addExpense);
+  const { addExpense, triggerRefresh } = useExpenseStore();
   const [image, setImage] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -161,8 +161,12 @@ const AddReceipt = () => {
       
       const newExpense = await expenseService.create(expenseData);
       addExpense(newExpense);
+      triggerRefresh(); // Explicitly trigger refresh
       toast.success('Expense added successfully!');
-      navigate('/expenses');
+      // Small delay to ensure store is updated before navigation
+      await new Promise(resolve => setTimeout(resolve, 100));
+      // Navigate to dashboard to see updated stats
+      navigate('/dashboard');
     } catch (error) {
       toast.error('Failed to add expense: ' + (error.response?.data?.detail || error.message));
     } finally {
