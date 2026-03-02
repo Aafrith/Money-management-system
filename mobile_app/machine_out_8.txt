@@ -1,0 +1,3 @@
+﻿WARNING|STATIC_WARNING|UNUSED_LOCAL_VARIABLE|D:\\open projects\\Money-management-system\\mobile_app\\lib\\presentation\\categories\\categories_screen.dart|23|11|6|The value of the local variable 'format' isn't used.
+INFO|LINT|AVOID_PRINT|D:\\open projects\\Money-management-system\\mobile_app\\lib\\core\\network\\api_client.dart|23|26|5|Don't invoke 'print' in production code.
+INFO|LINT|CURLY_BRACES_IN_FLOW_CONTROL_STRUCTURES|D:\\open projects\\Money-management-system\\mobile_app\\lib\\presentation\\navigation\\main_shell.dart|81|7|9|Statements in an if should be enclosed in a block.
