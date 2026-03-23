@@ -189,7 +189,7 @@ class _ExpensesScreenState extends ConsumerState<ExpensesScreen> {
               title: 'No expenses found',
               subtitle: 'Add a new expense to track your spending',
               action: ElevatedButton.icon(
-                onPressed: () => context.go('/expenses/add-manual'),
+                onPressed: () => context.go('/expenses/add/manual'),
                 icon: const Icon(Icons.add),
                 label: const Text('Add Expense'),
               ),
@@ -368,7 +368,7 @@ class _ExpensesScreenState extends ConsumerState<ExpensesScreen> {
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: () => context.go('/expenses/add-manual'),
+        onPressed: () => context.go('/expenses/add/manual'),
         child: const Icon(Icons.add),
       ),
     );
