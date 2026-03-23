@@ -129,6 +129,124 @@ async def call_gradio_llm(sms_text: str) -> dict:
             detail=f"Error calling Gradio API: {error_msg}"
         )
 
+async def _process_llm_result(llm_result: dict, original_text: str, source: str, current_user_id: str, db) -> ParsedExpenseData:
+    """
+    Common logic to process LLM result from Gradio API for both SMS and Voice
+    """
+    # Initialize parsed data
+    parsed = ParsedExpenseData(
+        confidence=0.0,
+        source=source,
+        description=original_text
+    )
+    
+    # 1. Extract amount
+    if "amount" in llm_result and llm_result["amount"]:
+        try:
+            parsed.amount = float(llm_result["amount"])
+            parsed.confidence += 0.4
+        except (ValueError, TypeError):
+            parsed.amount = 0.0
+    
+    # 2. Extract merchant - check merchant, beneficiary, or bank
+    merchant = None
+    if llm_result.get("merchant") and llm_result["merchant"] != "not specified":
+        merchant = llm_result["merchant"]
+    elif llm_result.get("beneficiary") and llm_result["beneficiary"] != "not specified":
+        merchant = llm_result["beneficiary"]
+    elif llm_result.get("bank"):
+        merchant = llm_result["bank"]
+    
+    if merchant:
+        parsed.merchant = merchant
+        parsed.confidence += 0.2
+    else:
+        parsed.merchant = "Voice Transaction" if source == 'voice' else "SMS Transaction"
+
+    # 3. Extract category
+    if "category" in llm_result and llm_result["category"]:
+        category_name = llm_result["category"].strip().lower()
+        
+        # Get user's categories
+        categories = await db.categories.find({"user_id": current_user_id}).to_list(length=None)
+        
+        # Try to match the category (case-insensitive)
+        matched_category = None
+        if categories:
+            for cat in categories:
+                if cat["name"].lower() == category_name:
+                    matched_category = cat["name"]
+                    break
+            
+            if not matched_category:
+                # Try to find similar category
+                for cat in categories:
+                    if category_name in cat["name"].lower() or cat["name"].lower() in category_name:
+                        matched_category = cat["name"]
+                        break
+            
+            if matched_category:
+                parsed.category = matched_category
+                parsed.confidence += 0.3
+            else:
+                parsed.category = categories[0]["name"]
+                parsed.confidence += 0.1
+    
+    # 4. Extract date
+    if "date" in llm_result and llm_result["date"]:
+        date_str = llm_result["date"]
+        if date_str and date_str != "not specified":
+            for fmt in ["%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%Y/%m/%d"]:
+                try:
+                    parsed.date = datetime.strptime(date_str, fmt)
+                    parsed.confidence += 0.1
+                    break
+                except ValueError:
+                    continue
+    
+    # If no date found, use current date
+    if not parsed.date:
+        parsed.date = datetime.utcnow()
+    
+    # 5. Create description for SMS (more detailed)
+    if source == 'sms':
+        transaction_type = llm_result.get("type", "debit")
+        is_p2m = llm_result.get("is_p2m", False)
+        account = llm_result.get("account", "")
+        bank = llm_result.get("bank", "")
+        
+        description_parts = [f"{transaction_type.capitalize()} transaction"]
+        if parsed.merchant:
+            description_parts.append(f"from {parsed.merchant}")
+        if is_p2m:
+            description_parts.append("(P2M)")
+        if account and account != "not specified":
+            description_parts.append(f"A/C: {account}")
+        if bank and bank != "not specified":
+            description_parts.append(f"via {bank}")
+            
+        parsed.description = " ".join(description_parts)
+    
+    # Extra merchant fallback using regex (mostly for SMS)
+    if not merchant and source == 'sms':
+        merchant_patterns = [
+            r'(?:at|to|for)\s+([A-Z][A-Za-z0-9\s&]+?)(?:\s+on|\s+dated|\.|$)',
+            r'(?:merchant|vendor)[:\s]+([A-Za-z0-9\s&]+)',
+            r'(?:spent|paid).*?at\s+([A-Z][A-Za-z0-9\s&]+)',
+        ]
+        
+        for pattern in merchant_patterns:
+            match = re.search(pattern, original_text, re.IGNORECASE)
+            if match:
+                res_merchant = match.group(1).strip()
+                res_merchant = re.sub(r'\s+', ' ', res_merchant)
+                if len(res_merchant) > 3:
+                    parsed.merchant = res_merchant
+                    parsed.confidence += 0.1
+                    break
+
+    return parsed
+
 @router.post("/voice-text", response_model=ParsedExpenseData)
 async def parse_voice_text(
     request: VoiceTextRequest,
@@ -140,60 +258,18 @@ async def parse_voice_text(
     Same as SMS parsing but for voice input
     """
     try:
-        # Call Gradio LLM to parse voice text (same as SMS)
+        # Call Gradio LLM to parse voice text
         llm_result = await call_gradio_llm(request.text)
         
-        # Parse date from LLM result - convert string to datetime
-        date_value = datetime.now()
-        date_str = llm_result.get('date', '')
-        if date_str and date_str != 'not specified':
-            try:
-                date_value = datetime.strptime(date_str, '%Y-%m-%d')
-            except ValueError:
-                try:
-                    date_value = datetime.strptime(date_str, '%d-%m-%Y')
-                except ValueError:
-                    date_value = datetime.now()
-        
-        # Extract parsed data from LLM result
-        parsed_data = ParsedExpenseData(
-            amount=llm_result.get('amount', 0.0),
-            merchant=llm_result.get('merchant', '') or llm_result.get('beneficiary', '') or 'Voice Transaction',
-            date=date_value,
-            category=llm_result.get('category', 'Other'),
-            confidence=0.8,
+        # Use unified processor
+        return await _process_llm_result(
+            llm_result=llm_result,
+            original_text=request.text,
             source='voice',
-            description=request.text,
-            items=[],
-            tax=0.0,
-            discount=0.0
+            current_user_id=str(current_user["_id"]),
+            db=db
         )
         
-        # Get user's categories to validate
-        categories = await db.categories.find({"user_id": str(current_user["_id"])}).to_list(length=None)
-        
-        # Validate category
-        if categories:
-            category_names = [cat["name"] for cat in categories]
-            if parsed_data.category not in category_names:
-                # Try case-insensitive match
-                matched = None
-                for cat_name in category_names:
-                    if cat_name.lower() == parsed_data.category.lower():
-                        matched = cat_name
-                        break
-                if matched:
-                    parsed_data.category = matched
-                else:
-                    parsed_data.category = categories[0]["name"]
-        
-        return parsed_data
-        
-    except asyncio.TimeoutError:
-        raise HTTPException(
-            status_code=504,
-            detail="Gradio API request timed out. The LLM service may be overloaded. Please try again."
-        )
     except Exception as e:
         print(f"Voice text parsing error: {str(e)}")
         # Return basic parsed data as fallback
@@ -202,12 +278,9 @@ async def parse_voice_text(
             merchant='Voice Transaction',
             date=datetime.now(),
             category='Other',
-            confidence=0.3,
+            confidence=0.1,
             source='voice',
-            description=request.text,
-            items=[],
-            tax=0.0,
-            discount=0.0
+            description=request.text
         )
 
 @router.post("/sms", response_model=ParsedExpenseData)
@@ -219,151 +292,18 @@ async def parse_sms(
     """Parse expense information from SMS text using Gradio LLM API"""
     text = request.text.strip()
     
-    # Initialize parsed data
-    parsed = ParsedExpenseData(confidence=0.0)
-    
     try:
         # Call Gradio LLM API to extract transaction details
         llm_result = await call_gradio_llm(text)
         
-        # Map LLM response to ParsedExpenseData
-        # Expected format: {"amount": 23360.0, "type": "debit", "category": "loan", 
-        #                  "account": "6084", "bank": "SBI", "merchant": "not specified", ...}
-        
-        # Extract amount
-        if "amount" in llm_result and llm_result["amount"]:
-            parsed.amount = float(llm_result["amount"])
-            parsed.confidence += 0.4
-        
-        # Extract merchant - check merchant, beneficiary, or bank
-        merchant = None
-        if llm_result.get("merchant") and llm_result["merchant"] != "not specified":
-            merchant = llm_result["merchant"]
-        elif llm_result.get("beneficiary") and llm_result["beneficiary"] != "not specified":
-            merchant = llm_result["beneficiary"]
-        elif llm_result.get("bank"):
-            merchant = llm_result["bank"]
-        
-        if merchant:
-            parsed.merchant = merchant
-            parsed.confidence += 0.2
-        
-        # Extract category
-        if "category" in llm_result and llm_result["category"]:
-            category_name = llm_result["category"].strip().lower()
-            
-            # Get user's categories
-            categories = await db.categories.find({"user_id": str(current_user["_id"])}).to_list(length=None)
-            
-            # Try to match the category (case-insensitive)
-            matched_category = None
-            for cat in categories:
-                if cat["name"].lower() == category_name:
-                    matched_category = cat["name"]
-                    break
-            
-            if matched_category:
-                parsed.category = matched_category
-                parsed.confidence += 0.3
-            else:
-                # Try to find similar category or use first available
-                if categories:
-                    # Check for partial matches
-                    for cat in categories:
-                        if category_name in cat["name"].lower() or cat["name"].lower() in category_name:
-                            matched_category = cat["name"]
-                            break
-                    parsed.category = matched_category if matched_category else categories[0]["name"]
-                parsed.confidence += 0.1
-        
-        # Extract date
-        if "date" in llm_result and llm_result["date"]:
-            try:
-                # Try parsing the date string
-                date_str = llm_result["date"]
-                if date_str != "not specified":
-                    parsed.date = datetime.strptime(date_str, "%Y-%m-%d")
-                    parsed.confidence += 0.1
-            except:
-                pass
-        
-        # If no date found, use current date
-        if not parsed.date:
-            parsed.date = datetime.utcnow()
-        
-        # Extract transaction type (debit/credit)
-        transaction_type = llm_result.get("type", "debit")
-        
-        # Check if it's P2M (Person to Merchant) transaction
-        is_p2m = llm_result.get("is_p2m", False)
-        
-        # Extract additional details for description
-        account = llm_result.get("account", "")
-        bank = llm_result.get("bank", "")
-        reference = llm_result.get("reference", "")
-        vpa = llm_result.get("vpa", "")
-        status = llm_result.get("status", "")
-        
-        # Create comprehensive description
-        description_parts = [f"{transaction_type.capitalize()} transaction"]
-        
-        if parsed.merchant:
-            description_parts.append(f"from {parsed.merchant}")
-        
-        if is_p2m:
-            description_parts.append("(P2M)")
-        
-        if account and account != "not specified":
-            description_parts.append(f"A/C: {account}")
-        
-        if bank and bank != "not specified":
-            description_parts.append(f"via {bank}")
-        
-        if vpa and vpa != "not specified":
-            description_parts.append(f"VPA: {vpa}")
-        
-        if reference and reference != "not specified":
-            description_parts.append(f"Ref: {reference}")
-        
-        if status and status != "not specified":
-            description_parts.append(f"[{status.upper()}]")
-        
-        parsed.description = " ".join(description_parts)
-        
-        # If no merchant was found, extract from SMS using regex
-        if not parsed.merchant:
-            merchant_patterns = [
-                r'(?:at|to|for)\s+([A-Z][A-Za-z0-9\s&]+?)(?:\s+on|\s+dated|\.|$)',
-                r'(?:merchant|vendor)[:\s]+([A-Za-z0-9\s&]+)',
-                r'(?:spent|paid).*?at\s+([A-Z][A-Za-z0-9\s&]+)',
-            ]
-            
-            for pattern in merchant_patterns:
-                match = re.search(pattern, text, re.IGNORECASE)
-                if match:
-                    merchant = match.group(1).strip()
-                    merchant = re.sub(r'\s+', ' ', merchant)
-                    if len(merchant) > 3:
-                        parsed.merchant = merchant
-                        parsed.confidence += 0.1
-                        break
-        
-        # Final fallback for merchant
-        if not parsed.merchant:
-            if bank and bank != "not specified":
-                parsed.merchant = f"{bank} Transaction"
-            elif parsed.category:
-                parsed.merchant = f"{parsed.category} Transaction"
-            else:
-                parsed.merchant = "SMS Transaction"
-        
-        # Ensure we have a category
-        if not parsed.category:
-            categories = await db.categories.find({"user_id": str(current_user["_id"])}).to_list(length=None)
-            if categories:
-                parsed.category = categories[0]["name"]
-        
-        return parsed
+        # Use unified processor
+        return await _process_llm_result(
+            llm_result=llm_result,
+            original_text=text,
+            source='sms',
+            current_user_id=str(current_user["_id"]),
+            db=db
+        )
         
     except HTTPException:
         # Re-raise HTTP exceptions from Gradio API
