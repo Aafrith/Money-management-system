@@ -123,7 +123,9 @@ class _AddSMSScreenState extends ConsumerState<AddSMSScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Expense saved successfully')),
         );
-        context.pop();
+        if (context.mounted) {
+          context.go('/expenses');
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -212,6 +214,12 @@ class _AddSMSScreenState extends ConsumerState<AddSMSScreen> {
                   const Center(child: AppLoadingWidget()),
                   const SizedBox(height: 16),
                   const Text('Extracting details from SMS...', textAlign: TextAlign.center),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'This may take up to 2 minutes. Please wait.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.grey, fontSize: 12),
+                  ),
                 ] else if (_parsedData != null) ...[
                   Form(
                     key: _formKey,

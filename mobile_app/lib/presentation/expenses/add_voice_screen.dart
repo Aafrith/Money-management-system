@@ -166,7 +166,9 @@ class _AddVoiceScreenState extends ConsumerState<AddVoiceScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Expense saved successfully')),
         );
-        context.pop();
+        if (context.mounted) {
+          context.go('/expenses');
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -269,6 +271,12 @@ class _AddVoiceScreenState extends ConsumerState<AddVoiceScreen> {
                   const Center(child: AppLoadingWidget()),
                   const SizedBox(height: 16),
                   const Text('Analyzing voice note...', textAlign: TextAlign.center),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'This may take up to 2 minutes. Please wait.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.grey, fontSize: 12),
+                  ),
                 ] else if (_parsedData != null) ...[
                   Form(
                     key: _formKey,

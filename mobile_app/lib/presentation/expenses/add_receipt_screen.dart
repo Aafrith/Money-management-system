@@ -104,7 +104,9 @@ class _AddReceiptScreenState extends ConsumerState<AddReceiptScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Expense saved successfully')),
         );
-        context.pop();
+        if (context.mounted) {
+          context.go('/expenses');
+        }
       }
     } catch (e) {
       if (mounted) {

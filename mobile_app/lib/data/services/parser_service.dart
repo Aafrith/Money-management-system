@@ -9,6 +9,12 @@ final parserServiceProvider = Provider<ParserService>((ref) {
   return ParserService(ref.read(dioProvider));
 });
 
+/// Dio [Options] with extended timeouts for Gradio LLM-backed endpoints.
+final _parserOptions = Options(
+  receiveTimeout: const Duration(milliseconds: ApiConstants.parserReceiveTimeout),
+  sendTimeout:    const Duration(milliseconds: ApiConstants.parserSendTimeout),
+);
+
 class ParserService {
   final Dio _dio;
 
@@ -16,16 +22,24 @@ class ParserService {
 
   Future<ParsedExpenseData> parseSms(String text) async {
     final response = await _dio.apiCall(
-      () => _dio.post(ApiConstants.parseSms, data: {'text': text}),
+      () => _dio.post(
+        ApiConstants.parseSms,
+        data: {'text': text},
+        options: _parserOptions,
+      ),
     );
-    return ParsedExpenseData.fromJson(response);
+    return ParsedExpenseData.fromJson(response as Map<String, dynamic>);
   }
 
   Future<ParsedExpenseData> parseVoiceText(String text) async {
     final response = await _dio.apiCall(
-      () => _dio.post(ApiConstants.parseVoiceText, data: {'text': text}),
+      () => _dio.post(
+        ApiConstants.parseVoiceText,
+        data: {'text': text},
+        options: _parserOptions,
+      ),
     );
-    return ParsedExpenseData.fromJson(response);
+    return ParsedExpenseData.fromJson(response as Map<String, dynamic>);
   }
 
   Future<ParsedExpenseData> parseReceipt(File imageFile) async {
@@ -41,12 +55,13 @@ class ParserService {
         ApiConstants.parseReceipt,
         data: formData,
         options: Options(
-          sendTimeout: const Duration(minutes: 2), // Receipts take longer
-          receiveTimeout: const Duration(minutes: 2),
+          // Receipts also need extended time for YOLO + upload
+          sendTimeout:    const Duration(milliseconds: ApiConstants.parserSendTimeout),
+          receiveTimeout: const Duration(milliseconds: ApiConstants.parserReceiveTimeout),
         ),
       ),
     );
 
-    return ParsedExpenseData.fromJson(response);
+    return ParsedExpenseData.fromJson(response as Map<String, dynamic>);
   }
 }

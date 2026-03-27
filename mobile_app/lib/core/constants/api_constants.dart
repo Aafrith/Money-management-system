@@ -1,5 +1,5 @@
 class ApiConstants {
-  static const String baseUrl = 'https://e872-107-152-38-38.ngrok-free.app/api/';
+  static const String baseUrl = 'https://b70d-43-252-15-89.ngrok-free.app/api/';
   // For iOS simulator use: 'http://localhost:8000/api/'
   // For physical device use your machine's IP: 'http://192.168.x.x:8000/api/'
 
@@ -30,8 +30,12 @@ class ApiConstants {
   static const String adminSettings = 'admin/settings';
   static const String adminSettingsReset = 'admin/settings/reset';
 
-  // Timeouts
+  // Timeouts (default)
   static const int connectTimeout = 15000;
   static const int receiveTimeout = 15000;
   static const int sendTimeout = 15000;
+
+  // Parser-specific timeouts (Gradio LLM calls can take up to 2 minutes)
+  static const int parserReceiveTimeout = 120000; // 120 s
+  static const int parserSendTimeout = 30000;     // 30 s
 }

@@ -73,7 +73,9 @@ class _AddManualScreenState extends ConsumerState<AddManualScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Expense added successfully')),
         );
-        context.pop();
+        if (context.mounted) {
+          context.go('/expenses');
+        }
       }
     } catch (e) {
       if (mounted) {
